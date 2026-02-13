@@ -166,7 +166,7 @@ async function updateUserPoints(event) {
     await doc.loadInfo();
     const sheet = doc.sheetsByIndex[0];
     const rows = await sheet.getRows();
-    let userRow = rows.find(r => r.get('user') === userId);
+    let userRow = rows.find(r => r.get('userId') === userId);
 
     if (userRow) {
       userRow.set('point', (parseInt(userRow.get('point')) || 0) + 1);
