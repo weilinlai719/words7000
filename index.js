@@ -1,32 +1,49 @@
 'use strict';
 
 /*==================================
- BASIC REUIRE
+ BASIC REQUIRE
 ====================================*/
 const line = require('@line/bot-sdk');
 const express = require('express');
 const path = require('path');
 const HTMLParser = require('node-html-parser');
 const https = require('https');
-const { getAudioDurationInSeconds } = require('get-audio-duration')
+const { getAudioDurationInSeconds } = require('get-audio-duration');
 const fs = require('fs');
+
+// --- Google Sheets 初始化所需套件 ---
+const { JWT } = require('google-auth-library');
+const { GoogleSpreadsheet } = require('google-spreadsheet');
+
 const config = {
-   channelAccessToken: process.env.token,
-  channelSecret: process.env.secret, 
+  channelAccessToken: process.env.token,
+  channelSecret: process.env.secret,
 };
 
+/*==================================
+ GOOGLE SHEETS 授權設定
+====================================*/
+const serviceAccountAuth = new JWT({
+  email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+  // 處理私鑰中的換行符號
+  key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+});
 
+const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID, serviceAccountAuth);
 
 /*==================================
- CUSTOM REUIRE AND INIT
+ CUSTOM REQUIRE AND INIT
 ====================================*/
 const client = new line.Client(config);
 const app = express();
-const words  = require('./words.json');
-const words_advance  = require('./words-advance.json');
+const words = require('./words.json');
+const words_advance = require('./words-advance.json');
 let echo = { type: 'text', text: '請從選單進行操作 ⬇️' };
 
-
+// 確保必要的暫存目錄存在
+const dirs = ['./user_question', './user_words', './users'];
+dirs.forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); });
 
 /*==================================
  APP REQUEST ACTIONS
@@ -35,22 +52,12 @@ app.use('/audio/', express.static('./audio/'));
 app.use('/video/', express.static('./video/'));
 
 app.get('/', (req, res) => {
-  let html = `<html>
-    <head>
-      <title>高中7000單</title>
-      <script>window.location = "https://lin.ee/BH9lDv7";</script>
-    </head>
-    <body style="text-align:center">
-      <h1>自動跳轉中⋯⋯</h1>
-    </body>
-  </html>`;
-
+  let html = `<html><head><title>高中7000單</title><script>window.location = "https://lin.ee/BH9lDv7";</script></head><body style="text-align:center"><h1>自動跳轉中⋯⋯</h1></body></html>`;
   res.send(html);
 });
 
 app.post('/callback', line.middleware(config), (req, res) => {
-  Promise
-    .all(req.body.events.map(handleEvent))
+  Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
     .catch((err) => {
       console.error(err);
@@ -58,31 +65,16 @@ app.post('/callback', line.middleware(config), (req, res) => {
     });
 });
 
-app.on('postback', function (event) {
-  console.log(event);
-});
-
-
-
 /*==================================
  APP ROUTER
 ====================================*/
 function handleEvent(event) {
-  if (event.type !== 'message' || event.type !== 'postback')
-  {
-    switch (event.type) {
-      case 'message':
-        handleMessageEvent(event);
-        break;
-      case 'postback':
-        handlePostbackEvent(event);
-        break;
-      default:
-        return client.replyMessage(event.replyToken, echo);
-    }
-  }
-  else {
-    // ignore non-text-message event
+  // 修正原本代碼中的邏輯判斷錯誤
+  if (event.type === 'message') {
+    return handleMessageEvent(event);
+  } else if (event.type === 'postback') {
+    return handlePostbackEvent(event);
+  } else {
     return Promise.resolve(null);
   }
 }
@@ -92,24 +84,18 @@ function handleMessageEvent(event) {
     case '開始測驗':
       let question_type_json = createQuestionType(event);
       return client.replyMessage(event.replyToken, [question_type_json]);
-      break;
     case '我的字庫':
       return createUserCollection(event);
-      break;
     case '得分':
-      return handleUserPoints(event);
-      break;
+      return handleUserPoints(event); // 改為從 Google Sheets 讀取
     case 'test':
       return client.replyMessage(event.replyToken, echo);
-      break;
     default:
       let user = event.source.userId;
       let path = __dirname + `/user_question/${user}.json`;
-
       if (fs.existsSync(path)) {
         return handleAudioAnswer(event);
-      }
-      else {
+      } else {
         return client.replyMessage(event.replyToken, echo);
       }
   }
@@ -121,48 +107,96 @@ function handlePostbackEvent(event) {
     case 'question_type':
       let question_type_json = createQuestion(event, postback_result.question_type);
       return client.replyMessage(event.replyToken, [question_type_json]);
-      break;
     case 'answer':
-      let answer_result = handleAnswer(event.postback.data)
+      let answer_result = handleAnswer(event.postback.data);
       if (answer_result) {
-        updateUserPoints(event);
+        updateUserPoints(event); // 正確：寫入試算表
         return client.replyMessage(event.replyToken, moreQuestion(postback_result.question_type, postback_result.wid, true));
-      }
-      else {
-        updateUserWrongAnswer(event);
+      } else {
+        updateUserWrongAnswer(event); // 錯誤：寫入試算表
         return client.replyMessage(event.replyToken, moreQuestion(postback_result.question_type, postback_result.wid, false));
       }
-      break;
     case 'play_pronounce':
       return playPronounce(event, postback_result.wid);
-      break;
     case 'more_question':
       let more_question_json = createQuestion(event, postback_result.question_type, postback_result.wid);
       return client.replyMessage(event.replyToken, [more_question_json]);
-      break;
     case 'more_test':
       let question_json = createQuestion(event, postback_result.question_type);
       return client.replyMessage(event.replyToken, [question_json]);
-      break;
     case 'add_to_collection':
       return addToUserCollection(event, postback_result.wid);
-      break;
     case 'delete_from_my_collection':
       return deleteFromMyCollection(event, postback_result.wid);
-      break;
     case 'check_my_collection':
       return createUserCollection(event);
-      break;
     case 'check_word':
       return checkWord(event, postback_result.wid);
-      break;
     default:
       return client.replyMessage(event.replyToken, echo);
   }
 }
 
+/*==================================
+ GOOGLE SHEETS 關鍵函數 (替換原本的 fs 讀寫)
+====================================*/
 
+async function handleUserPoints(event) {
+  const userId = event.source.userId;
+  try {
+    await doc.loadInfo();
+    const sheet = doc.sheetsByIndex[0];
+    const rows = await sheet.getRows();
+    const userRow = rows.find(r => r.get('user') === userId);
 
+    if (userRow) {
+      const userData = {
+        point: parseInt(userRow.get('point')) || 0,
+        wrong_answer: parseInt(userRow.get('wrong_answer')) || 0
+      };
+      return client.replyMessage(event.replyToken, createPointMessage(userData));
+    } else {
+      await sheet.addRow({ user: userId, point: 0, wrong_answer: 0 });
+      return client.replyMessage(event.replyToken, { type: 'text', text: "零分啦！開始測驗累積分數吧！" });
+    }
+  } catch (e) {
+    console.error('Sheet Read Error:', e);
+  }
+}
+
+async function updateUserPoints(event) {
+  const userId = event.source.userId;
+  try {
+    await doc.loadInfo();
+    const sheet = doc.sheetsByIndex[0];
+    const rows = await sheet.getRows();
+    let userRow = rows.find(r => r.get('user') === userId);
+
+    if (userRow) {
+      userRow.set('point', (parseInt(userRow.get('point')) || 0) + 1);
+      await userRow.save();
+    } else {
+      await sheet.addRow({ user: userId, point: 1, wrong_answer: 0 });
+    }
+  } catch (e) { console.error('Sheet Update Error:', e); }
+}
+
+async function updateUserWrongAnswer(event) {
+  const userId = event.source.userId;
+  try {
+    await doc.loadInfo();
+    const sheet = doc.sheetsByIndex[0];
+    const rows = await sheet.getRows();
+    let userRow = rows.find(r => r.get('user') === userId);
+
+    if (userRow) {
+      userRow.set('wrong_answer', (parseInt(userRow.get('wrong_answer')) || 0) + 1);
+      await userRow.save();
+    } else {
+      await sheet.addRow({ user: userId, point: 0, wrong_answer: 1 });
+    }
+  } catch (e) { console.error('Sheet Update Error:', e); }
+}
 /*==================================
  APP FUNCTIONS
 ====================================*/
@@ -1079,5 +1113,5 @@ function getObjectItemIndex(object, id) {
 ====================================*/
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`listening on ${port}`);
+  console.log(`listening on ${port} - Google Sheets Mode`);
 });
