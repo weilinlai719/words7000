@@ -363,29 +363,76 @@ function playPronounce(event, wid) {
   });
 }
 
-function addToUserCollection(event, wid) {
-  let user = event.source.userId;
-  let path = __dirname + `/user_words/${user}.json`;
-  let word = words.find(x => x.id == wid);
-  let user_data = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path)) : [{"user": user, "words": []}];
-  let user_words = user_data[0].words;
-  if (user_words.length >= 70) return client.replyMessage(event.replyToken, { type: "text", text: "你的字庫達上限，請刪減一些單字" });
-  if (user_words.find(x => x.id == wid)) return client.replyMessage(event.replyToken, { type: "text", text: "字彙已在您的字庫中！" });
-  user_words.push(word);
-  fs.writeFileSync(path, JSON.stringify([{"user": user, "words": user_words}]));
-  return client.replyMessage(event.replyToken, { type: "text", text: "已加入您的字庫" });
+async function addToUserCollection(event, wid) {
+  const userId = event.source.userId;
+  const word = words.find(x => x.id == wid);
+  try {
+    await doc.loadInfo();
+    const sheet = doc.sheetsByTitle['words']; // 抓取名為 words 的分頁
+    const rows = await sheet.getRows();
+    
+    // 檢查是否已存過
+    const isExist = rows.find(r => r.get('userId') === userId && r.get('wordId') === wid);
+    if (isExist) return client.replyMessage(event.replyToken, { type: "text", text: "此單字已在您的雲端字庫中！" });
+
+    // 檢查上限 (例如 100 字)
+    const userWordsCount = rows.filter(r => r.get('userId') === userId).length;
+    if (userWordsCount >= 100) return client.replyMessage(event.replyToken, { type: "text", text: "雲端字庫已達上限 (100字)" });
+
+    // 寫入試算表
+    await sheet.addRow({ 
+      userId: userId, 
+      wordId: wid, 
+      word: word.word, 
+      translate: word.translate 
+    });
+    return client.replyMessage(event.replyToken, { type: "text", text: "已成功加入雲端字庫！" });
+  } catch (err) { console.error('Add Word Error:', err); }
 }
 
-function deleteFromMyCollection(event, wid) {
-  let user = event.source.userId;
-  let path = __dirname + `/user_words/${user}.json`;
-  if (!fs.existsSync(path)) return client.replyMessage(event.replyToken, { type: "text", text: "找不到您的字庫資料" });
-  let user_data = JSON.parse(fs.readFileSync(path));
-  let user_words = user_data[0].words;
-  let index = user_words.findIndex(x => x.id == wid);
-  if (index !== -1) user_words.splice(index, 1);
-  fs.writeFileSync(path, JSON.stringify([{"user": user, "words": user_words}]));
-  return client.replyMessage(event.replyToken, [{ "type": "flex", "altText": "刪除成功", "contents": { "type": "bubble", "body": { "type": "box", "layout": "vertical", "spacing": "md", "contents": [{ "type": "text", "size": "lg", "text": "刪除成功！" }, { "type": "button", "action": { "type": "message", "label": "查看我的字庫", "text": "我的字庫" }, "style": "secondary" }] } } }]);
+async function createUserCollection(event) {
+  const userId = event.source.userId;
+  try {
+    await doc.loadInfo();
+    const sheet = doc.sheetsByTitle['words'];
+    const rows = await sheet.getRows();
+    const userWords = rows.filter(r => r.get('userId') === userId);
+
+    if (userWords.length === 0) return client.replyMessage(event.replyToken, { type: "text", text: "您的雲端字庫是空的，快去挑戰吧！" });
+
+    let bubble_content = [];
+    let box_content = [];
+    
+    for (let i = 0; i < userWords.length; i++) {
+      box_content.push({ "type": "box", "layout": "horizontal", "contents": [
+        { "type": "text", "wrap": true, "flex": 5, "text": `${userWords[i].get('word')}\n${userWords[i].get('translate')}` },
+        { "type": "button", "flex": 2, "action": { "type": "postback", "label": "查看", "data": `wid=${userWords[i].get('wordId')}&type=check_word&content=查看` }, "style": "secondary" }
+      ]});
+      
+      if ((i + 1) < userWords.length && (i + 1) % 6 != 0) box_content.push({ "type": "separator" });
+      
+      if ((i + 1) % 6 == 0 || (i + 1) == userWords.length) {
+        bubble_content.push({ "type": "bubble", "body": { "type": "box", "layout": "vertical", "spacing": "md", "contents": box_content } });
+        box_content = [];
+      }
+    }
+    return client.replyMessage(event.replyToken, [{ "type": "flex", "altText": "我的雲端字庫", "contents": { "type": "carousel", "contents": bubble_content } }]);
+  } catch (err) { console.error('List Word Error:', err); }
+}
+
+async function deleteFromMyCollection(event, wid) {
+  const userId = event.source.userId;
+  try {
+    await doc.loadInfo();
+    const sheet = doc.sheetsByTitle['words'];
+    const rows = await sheet.getRows();
+    const targetRow = rows.find(r => r.get('userId') === userId && r.get('wordId') === wid);
+
+    if (targetRow) {
+      await targetRow.delete(); 
+      return client.replyMessage(event.replyToken, { type: "text", text: "已從雲端字庫刪除！" });
+    }
+  } catch (err) { console.error('Delete Word Error:', err); }
 }
 
 function createPointMessage(user_json) {
