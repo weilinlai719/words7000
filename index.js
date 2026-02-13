@@ -38,7 +38,7 @@ app.get('/', (req, res) => {
   let html = `<html>
     <head>
       <title>高中7000單</title>
-      <script>window.location = "https://line.me/R/ti/p/@323geiqw";</script>
+      <script>window.location = "https://lin.ee/BH9lDv7";</script>
     </head>
     <body style="text-align:center">
       <h1>自動跳轉中⋯⋯</h1>
