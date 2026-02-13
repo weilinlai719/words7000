@@ -183,7 +183,7 @@ async function updateUserWrongAnswer(event) {
     await doc.loadInfo();
     const sheet = doc.sheetsByIndex[0];
     const rows = await sheet.getRows();
-    let userRow = rows.find(r => r.get('user') === userId);
+    let userRow = rows.find(r => r.get('userId') === userId);
 
     if (userRow) {
       userRow.set('wrong_answer', (parseInt(userRow.get('wrong_answer')) || 0) + 1);
