@@ -11,8 +11,8 @@ const https = require('https');
 const { getAudioDurationInSeconds } = require('get-audio-duration')
 const fs = require('fs');
 const config = {
-  channelAccessToken: '',
-  channelSecret: '',
+   channelAccessToken: process.env.token,
+  channelSecret: process.env.secret, 
 };
 
 
