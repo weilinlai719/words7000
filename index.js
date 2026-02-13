@@ -172,7 +172,7 @@ async function updateUserPoints(event) {
       userRow.set('point', (parseInt(userRow.get('point')) || 0) + 1);
       await userRow.save();
     } else {
-      await sheet.addRow({ user: userId, point: 1, wrong_answer: 0 });
+       await sheet.addRow({ userId: userId, point: 1, wrong_answer: 0 });
     }
   } catch (err) { console.error('Sheet Update Error:', err); }
 }
