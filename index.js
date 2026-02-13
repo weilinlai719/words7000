@@ -148,9 +148,6 @@ async function handleUserPoints(event) {
         point: parseInt(userRow.get('point')) || 0,
         wrong_answer: parseInt(userRow.get('wrong_answer')) || 0
       };
-      userRow.set('point', (parseInt(userRow.get('point')) || 0) + 1);
-      await userRow.save();
-      console.log('分數更新成功！');
       return client.replyMessage(event.replyToken, createPointMessage(userData));
     } else {
       console.log('找不到用戶，建立新欄位');
@@ -167,7 +164,6 @@ async function updateUserPoints(event) {
     const sheet = doc.sheetsByIndex[0];
     const rows = await sheet.getRows();
     let userRow = rows.find(r => r.get('userId') === userId);
-
     if (userRow) {
       userRow.set('point', (parseInt(userRow.get('point')) || 0) + 1);
       await userRow.save();
