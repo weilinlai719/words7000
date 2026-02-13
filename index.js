@@ -25,7 +25,7 @@ const config = {
 ====================================*/
 const serviceAccountAuth = new JWT({
   email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
- key: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.split(String.raw`\n`).join('\n') : undefined,
+ key: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n').replace(/"/g, '') : '',
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
@@ -134,22 +134,28 @@ function handlePostbackEvent(event) {
 
 async function handleUserPoints(event) {
   const userId = event.source.userId;
+  console.log('正在嘗試幫用戶加分，ID:', userId);
   try {
     await doc.loadInfo();
     const sheet = doc.sheetsByIndex[0];
     const rows = await sheet.getRows();
-    const userRow = rows.find(r => r.get('user') === userId);
+    const userRow = rows.find(r => r.get('userId') === userId);
 
     if (userRow) {
+      console.log('找到用戶，目前分數:', userRow.get('point'));
       const userData = {
         user: userId,
         point: parseInt(userRow.get('point')) || 0,
         wrong_answer: parseInt(userRow.get('wrong_answer')) || 0
       };
+      userRow.set('point', (parseInt(userRow.get('point')) || 0) + 1);
+      await userRow.save();
+      console.log('分數更新成功！');
       return client.replyMessage(event.replyToken, createPointMessage(userData));
     } else {
-      await sheet.addRow({ user: userId, point: 0, wrong_answer: 0 });
-      return client.replyMessage(event.replyToken, { type: 'text', text: "零分啦！開始挑戰吧！" });
+      console.log('找不到用戶，建立新欄位');
+      await sheet.addRow({ userId: userId, point: 0, wrong_answer: 0 });
+      return client.replyMessage(event.replyToken, { type: 'text', text: "找不到用戶，開始挑戰吧" });
     }
   } catch (err) { console.error('Sheet Read Error:', err); }
 }
