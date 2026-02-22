@@ -287,8 +287,8 @@ function handleAudioAnswer(event) {
   if (!fs.existsSync(path)) return;
   let user_json = JSON.parse(fs.readFileSync(path));
   let w = user_json[0];
-  let answer = w.word.replace(/(\w+)\s.+/g, "$1").replace(/é/g, "e").replace(/[-.\s]/g, "").toLowerCase();
-  let user_answer = event.message.text.replace(/[-.\s]/g, "").replace(/é/g, "e").toLowerCase();
+  let answer = w.word.replace(/(\w+)\s.+/g, "$1").replace(/é/g, "e").replace(/[-.]/g, "").toLowerCase();
+  let user_answer = event.message.text.replace(/[-.]/g, "").replace(/é/g, "e").toLowerCase();
   fs.unlinkSync(path);
   if (user_answer == answer) {
     updateUserPoints(event);
@@ -325,7 +325,7 @@ function createUserCollection(event) {
 
 function checkWord(event, wid) {
   let w = words.find(x => x.id == wid);
-  let word = w.word.replace(/é/g, "e").replace(/[-.\s]/g, "").replace(/(\w+)\s(\(\w+\.?\))/g, "$1");
+  let word = w.word.replace(/é/g, "e").replace(/[-.]/g, "").replace(/(\w+)\s(\(\w+\.?\))/g, "$1");
   if (word == "BBQ") word = "barbecue";
   let url = "https://cdict.info/query/" + encodeURIComponent(word);
 
