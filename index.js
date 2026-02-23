@@ -291,26 +291,16 @@ async function callAI(event, prompt) {
     await doc.loadInfo();
     const sheet = doc.sheetsByTitle['ai_memory'] ; 
     const rows = await sheet.getRows();
+const userHistory = (rows || []).filter(r => r.get('userId') === userId).slice(-5);
     
+let aiMessages = [{ role: "system", content: "你是友善的英語教練。" }];
 
-    const userHistory = rows
-      .filter(r => r.get('userId') === userId)
-      .slice(-5); 
-
-
-    let aiMessages = [
-      { role: "system", content: "你是友善的英語教練。請記住之前的對話脈絡來回答問題。" }
-    ];
-
-    userHistory.forEach(row => {
-      aiMessages.push({ 
-        role: row.get('role'), 
-        content: row.get('content') 
-      });
-    });
-
-
-    aiMessages.push({ role: "user", content: prompt });
+if (userHistory.length > 0) {
+  userHistory.forEach(row => {
+    aiMessages.push({ role: row.get('role'), content: row.get('content') });
+  });
+}
+aiMessages.push({ role: "user", content: prompt });
 
     const postData = JSON.stringify({
       model: "gemini-2.5-flash",
