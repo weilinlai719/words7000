@@ -250,6 +250,32 @@ function queryWord(event, input) {
         wrap: true,
         text: word_info
       });
+
+      client.replyMessage(event.replyToken, [{
+        type: "flex",
+        altText: "單字查詢",
+        contents: {
+          type: "bubble",
+          header: {
+            type: "box",
+            layout: "vertical",
+            contents: [{
+              type: "text",
+              size: "xl",
+              text: word
+            }]
+          },
+          body: {
+            type: "box",
+            layout: "vertical",
+            spacing: "md",
+            contents: body_contents
+          }
+        }
+      }]);
+    });
+  });
+}
       async function callAI(event, prompt) {
   if (!prompt) {
     return client.replyMessage(event.replyToken, {
@@ -310,31 +336,6 @@ function queryWord(event, input) {
 
     req.write(postData);
     req.end();
-  });
-}
-      client.replyMessage(event.replyToken, [{
-        type: "flex",
-        altText: "單字查詢",
-        contents: {
-          type: "bubble",
-          header: {
-            type: "box",
-            layout: "vertical",
-            contents: [{
-              type: "text",
-              size: "xl",
-              text: word
-            }]
-          },
-          body: {
-            type: "box",
-            layout: "vertical",
-            spacing: "md",
-            contents: body_contents
-          }
-        }
-      }]);
-    });
   });
 }
 function createQuestionType() {
