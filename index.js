@@ -291,8 +291,17 @@ async function callAI(event, prompt) {
     await doc.loadInfo();
     const sheet = doc.sheetsByTitle['ai_memory'] ; 
     const rows = await sheet.getRows();
-const userHistory = (rows || []).filter(r => r.get('userId') === userId).slice(-5);
-    
+    const safeRows = Array.isArray(rows) ? rows : [];
+let userHistory = [];
+if (safeRows.length > 0) {
+  userHistory = safeRows.filter(r => {
+    try {
+      return r.get('userId') === userId;
+    } catch (e) {
+      return false;
+    }
+  }).slice(-5);
+}
 let aiMessages = [{ role: "system", content: "你是友善的英語教練。" }];
 
 if (userHistory.length > 0) {
