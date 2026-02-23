@@ -285,7 +285,7 @@ function queryWord(event, input) {
   }
 
   const postData = JSON.stringify({
-    model: "gpt-3.5-turbo",
+    model: "gpt-4.1-mini",
     messages: [
       { role: "system", content: "你是友善的英語教練。" },
       { role: "user", content: prompt }
@@ -307,6 +307,7 @@ function queryWord(event, input) {
       let data = "";
       res.on("data", (chunk) => (data += chunk));
       res.on("end", () => {
+         console.log("OPENAI RAW:", data);
         try {
           const json = JSON.parse(data);
           const replyText = json.choices[0].message.content.trim();
