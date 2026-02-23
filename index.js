@@ -85,13 +85,19 @@ function handleMessageEvent(event) {
     case '得分':
       return handleUserPoints(event); 
     default:
-      let user = event.source.userId;
-      let qPath = __dirname + `/user_question/${user}.json`;
-      if (fs.existsSync(qPath)) {
-        return handleAudioAnswer(event);
-      } else {
-        return client.replyMessage(event.replyToken, echo);
-      }
+  let user = event.source.userId;
+  let qPath = __dirname + `/user_question/${user}.json`;
+
+  if (fs.existsSync(qPath)) {
+    return handleAudioAnswer(event);
+  }
+
+  // ⭐ 新增功能：若輸入為英文單字 → 查詢
+  if (/^[a-zA-Z\s\-\.]+$/.test(event.message.text)) {
+    return queryWord(event, event.message.text);
+  }
+
+  return client.replyMessage(event.replyToken, echo);
   }
 }
 
@@ -193,7 +199,80 @@ async function updateUserWrongAnswer(event) {
 /*==================================
  APP FUNCTIONS (原本 600 行的所有邏輯都在這)
 ====================================*/
+function queryWord(event, input) {
+  let word = input
+    .trim()
+    .replace(/[-.]/g, "")
+    .replace(/é/g, "e");
 
+  let url = "https://cdict.info/query/" + encodeURIComponent(word);
+
+  https.get(url, (res) => {
+    let data = '';
+    res.on('data', chunk => data += chunk);
+
+    res.on('end', () => {
+      let root = HTMLParser.parse(data);
+
+      let word_pa =
+        root.querySelector('.resultbox .dictt')
+          ?.innerText
+          .replace(/(國際音標)/g, "\n國際音標") || "";
+
+      let word_info =
+        root.querySelector('.resultbox')
+          ?.toString()
+          .replace(/<br\s*[\/]?>/g, "\n")
+          .replace(/<[^>]+>/g, "") || "查無資料";
+
+      if (word_info.includes("找不到相關")) {
+        word_info = "字典查無資料，請確認拼字";
+      }
+
+      let body_contents = [];
+
+      if (word_pa) {
+        body_contents.push({
+          type: "text",
+          color: "#999999",
+          size: "xs",
+          wrap: true,
+          text: word_pa
+        });
+        body_contents.push({ type: "separator" });
+      }
+
+      body_contents.push({
+        type: "text",
+        wrap: true,
+        text: word_info
+      });
+
+      client.replyMessage(event.replyToken, [{
+        type: "flex",
+        altText: "單字查詢",
+        contents: {
+          type: "bubble",
+          header: {
+            type: "box",
+            layout: "vertical",
+            contents: [{
+              type: "text",
+              size: "xl",
+              text: word
+            }]
+          },
+          body: {
+            type: "box",
+            layout: "vertical",
+            spacing: "md",
+            contents: body_contents
+          }
+        }
+      }]);
+    });
+  });
+}
 function createQuestionType() {
   return {
     "type": "flex", "altText": "考試開始，不要作弊！",
