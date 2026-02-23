@@ -77,6 +77,11 @@ function handleEvent(event) {
 }
 
 function handleMessageEvent(event) {
+  const text = event.message.text?.trim();
+   if (text && text.startsWith('/ai')) {
+    const prompt = text.replace('/ai', '').trim();
+    return callAI(event, prompt);
+  }
   switch (event.message.text) {
     case '開始測驗':
       return client.replyMessage(event.replyToken, [createQuestionType()]);
@@ -91,8 +96,6 @@ function handleMessageEvent(event) {
   if (fs.existsSync(qPath)) {
     return handleAudioAnswer(event);
   }
-
-  // ⭐ 新增功能：若輸入為英文單字 → 查詢
   if (/^[a-zA-Z\s\-\.]+$/.test(event.message.text)) {
     return queryWord(event, event.message.text);
   }
@@ -197,7 +200,7 @@ async function updateUserWrongAnswer(event) {
 }
 
 /*==================================
- APP FUNCTIONS (原本 600 行的所有邏輯都在這)
+ APP FUNCTIONS 
 ====================================*/
 function queryWord(event, input) {
   let word = input
@@ -247,7 +250,68 @@ function queryWord(event, input) {
         wrap: true,
         text: word_info
       });
+      async function callAI(event, prompt) {
+  if (!prompt) {
+    return client.replyMessage(event.replyToken, {
+      type: "text",
+      text: "請在 /ai 後面輸入內容"
+    });
+  }
 
+  const postData = JSON.stringify({
+    model: "gpt-3.5-turbo",
+    messages: [
+      { role: "system", content: "你是友善的英語教練。" },
+      { role: "user", content: prompt }
+    ],
+  });
+
+  const options = {
+    hostname: "api.openai.com",
+    path: "/v1/chat/completions",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + process.env.OPENAI_API_KEY
+    }
+  };
+
+  return new Promise((resolve) => {
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        try {
+          const json = JSON.parse(data);
+          const replyText = json.choices[0].message.content.trim();
+
+          client.replyMessage(event.replyToken, {
+            type: "text",
+            text: replyText
+          });
+
+        } catch (err) {
+          client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "AI 回傳格式錯誤或超出免費額度"
+          });
+        }
+        resolve();
+      });
+    });
+
+    req.on("error", (err) => {
+      client.replyMessage(event.replyToken, {
+        type: "text",
+        text: "AI 連線失敗"
+      });
+      resolve();
+    });
+
+    req.write(postData);
+    req.end();
+  });
+}
       client.replyMessage(event.replyToken, [{
         type: "flex",
         altText: "單字查詢",
