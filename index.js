@@ -340,23 +340,23 @@ aiMessages.push({ role: "user", content: prompt });
   try {
     const json = JSON.parse(data);
     
-
+    // 1. 如果 API 有錯誤訊息，直接印出來
     if (json.error) {
       console.error("Gemini API 返回錯誤:", json.error);
       return client.replyMessage(event.replyToken, { type: "text", text: `API 錯誤：${json.error.message}` });
     }
 
-    
+    // 2. 關鍵保險：如果沒有 choices，通常是觸發了安全性攔截
     if (!json.choices || json.choices.length === 0) {
       console.error("Gemini 返回異常結構（可能被攔截）:", json);
-     
+      // 如果被攔截，通常會出現在 json.promptFeedback 裡
       return client.replyMessage(event.replyToken, { type: "text", text: "AI 覺得這個話題不安全，拒絕回答喔！" });
     }
 
-  
+    // 3. 安全取得內容
     const replyText = json.choices[0].message.content.trim();
 
-  
+    // 4. 寫入 Sheets (確保 sheet 變數存在)
     if (sheet) {
       await sheet.addRow({ 
         userId: userId, 
@@ -375,17 +375,11 @@ aiMessages.push({ role: "user", content: prompt });
     client.replyMessage(event.replyToken, { type: "text", text: replyText });
 
   } catch (err) {
-    console.error("解析失敗，原始資料為:", data); 
+    console.error("解析失敗，原始資料為:", data); // 在 Render Log 裡看這行
     client.replyMessage(event.replyToken, { type: "text", text: "解析 AI 回傳時出錯，請看 Log。" });
   }
   resolve();
 });
-          } catch (err) {
-            console.error("AI Error:", err);
-            client.replyMessage(event.replyToken, { type: "text", text: "教練現在有點忙，請稍後再試。" });
-          }
-          resolve();
-        });
       });
 
       req.on("error", (err) => { resolve(); });
