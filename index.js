@@ -284,68 +284,100 @@ async function callAI(event, prompt) {
     });
   }
 
-  const postData = JSON.stringify({
-    model: "gemini-2.5-flash", 
-    messages: [
-      { role: "system", content: "你是友善的英語教練。" },
-      { role: "user", content: prompt }
-    ],
-  });
+  const userId = event.source.userId;
 
-  const options = {
-    hostname: "generativelanguage.googleapis.com",
-    path: "/v1beta/openai/chat/completions",
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // GEMINI_API_KEY 
-      "Authorization": "Bearer " + process.env.GEMINI_API_KEY 
-    }
-  };
+  try {
+  
+    await doc.loadInfo();
+    const sheet = doc.sheetsByTitle['ai_memory'] ; 
+    const rows = await sheet.getRows();
+    
 
-  return new Promise((resolve) => {
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => {
-         console.log("GEMINI RAW:", data);
-        try {
-          const json = JSON.parse(data);
-          
-      
-          if (json.error) {
-              throw new Error(json.error.message);
+    const userHistory = rows
+      .filter(r => r.get('userId') === userId)
+      .slice(-5); 
+
+
+    let aiMessages = [
+      { role: "system", content: "你是友善的英語教練。請記住之前的對話脈絡來回答問題。" }
+    ];
+
+    userHistory.forEach(row => {
+      aiMessages.push({ 
+        role: row.get('role'), 
+        content: row.get('content') 
+      });
+    });
+
+
+    aiMessages.push({ role: "user", content: prompt });
+
+    const postData = JSON.stringify({
+      model: "gemini-2.5-flash",
+      messages: aiMessages,
+      safety_settings: [
+        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+      ]
+    });
+
+    const options = {
+      hostname: "generativelanguage.googleapis.com",
+      path: "/v1beta/openai/chat/completions",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + process.env.GEMINI_API_KEY 
+      }
+    };
+
+    return new Promise((resolve) => {
+      const req = https.request(options, (res) => {
+        let data = "";
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", async () => {
+          try {
+            const json = JSON.parse(data);
+            if (json.error) throw new Error(json.error.message);
+
+            const replyText = json.choices[0].message.content.trim();
+            await sheet.addRow({ 
+              userId: userId, 
+              role: "user", 
+              content: prompt, 
+              time: new Date().toLocaleString() 
+            });
+            await sheet.addRow({ 
+              userId: userId, 
+              role: "assistant", 
+              content: replyText, 
+              time: new Date().toLocaleString() 
+            });
+
+            client.replyMessage(event.replyToken, {
+              type: "text",
+              text: replyText
+            });
+
+          } catch (err) {
+            console.error("AI Error:", err);
+            client.replyMessage(event.replyToken, { type: "text", text: "教練現在有點忙，請稍後再試。" });
           }
-
-          const replyText = json.choices[0].message.content.trim();
-
-          client.replyMessage(event.replyToken, {
-            type: "text",
-            text: replyText
-          });
-
-        } catch (err) {
-          console.error("Error:", err);
-          client.replyMessage(event.replyToken, {
-            type: "text",
-            text: "AI 暫時無法回應，請稍後再試（可能達到免費額度上限）"
-          });
-        }
-        resolve();
+          resolve();
+        });
       });
+
+      req.on("error", (err) => { resolve(); });
+      req.write(postData);
+      req.end();
     });
 
-    req.on("error", (err) => {
-      client.replyMessage(event.replyToken, {
-        type: "text",
-        text: "AI 連線失敗"
-      });
-      resolve();
-    });
-
-    req.write(postData);
-    req.end();
-  });
+  } catch (err) {
+    console.error('Sheet Memory Error:', err);
+    return client.replyMessage(event.replyToken, { type: "text", text: "記憶讀取失敗" });
+  }
 }
 function createQuestionType() {
   return {
