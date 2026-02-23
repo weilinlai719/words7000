@@ -276,7 +276,7 @@ function queryWord(event, input) {
     });
   });
 }
-      async function callAI(event, prompt) {
+async function callAI(event, prompt) {
   if (!prompt) {
     return client.replyMessage(event.replyToken, {
       type: "text",
@@ -285,7 +285,7 @@ function queryWord(event, input) {
   }
 
   const postData = JSON.stringify({
-    model: "gpt-4.1-mini",
+    model: "gemini-2.5-flash", 
     messages: [
       { role: "system", content: "你是友善的英語教練。" },
       { role: "user", content: prompt }
@@ -293,12 +293,13 @@ function queryWord(event, input) {
   });
 
   const options = {
-    hostname: "api.openai.com",
-    path: "/v1/chat/completions",
+    hostname: "generativelanguage.googleapis.com",
+    path: "/v1beta/openai/chat/completions",
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": "Bearer " + process.env.OPENAI_API_KEY
+      // GEMINI_API_KEY 
+      "Authorization": "Bearer " + process.env.GEMINI_API_KEY 
     }
   };
 
@@ -307,9 +308,15 @@ function queryWord(event, input) {
       let data = "";
       res.on("data", (chunk) => (data += chunk));
       res.on("end", () => {
-         console.log("OPENAI RAW:", data);
+         console.log("GEMINI RAW:", data);
         try {
           const json = JSON.parse(data);
+          
+      
+          if (json.error) {
+              throw new Error(json.error.message);
+          }
+
           const replyText = json.choices[0].message.content.trim();
 
           client.replyMessage(event.replyToken, {
@@ -318,9 +325,10 @@ function queryWord(event, input) {
           });
 
         } catch (err) {
+          console.error("Error:", err);
           client.replyMessage(event.replyToken, {
             type: "text",
-            text: "AI 回傳格式錯誤或超出免費額度"
+            text: "AI 暫時無法回應，請稍後再試（可能達到免費額度上限）"
           });
         }
         resolve();
