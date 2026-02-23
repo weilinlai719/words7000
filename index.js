@@ -314,12 +314,6 @@ aiMessages.push({ role: "user", content: prompt });
     const postData = JSON.stringify({
       model: "gemini-2.5-flash",
       messages: aiMessages,
-      safety_settings: [
-        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-      ]
     });
 
     const options = {
@@ -333,55 +327,37 @@ aiMessages.push({ role: "user", content: prompt });
     };
 
     return new Promise((resolve) => {
-      const req = https.request(options, (res) => {
+       const req = https.request(options, (res) => {
         let data = "";
         res.on("data", (chunk) => (data += chunk));
         res.on("end", async () => {
-  try {
-    const json = JSON.parse(data);
-    
-    // 1. 如果 API 有錯誤訊息，直接印出來
-    if (json.error) {
-      console.error("Gemini API 返回錯誤:", json.error);
-      return client.replyMessage(event.replyToken, { type: "text", text: `API 錯誤：${json.error.message}` });
-    }
-
-    // 2. 關鍵保險：如果沒有 choices，通常是觸發了安全性攔截
-    if (!json.choices || json.choices.length === 0) {
-      console.error("Gemini 返回異常結構（可能被攔截）:", json);
-      // 如果被攔截，通常會出現在 json.promptFeedback 裡
-      return client.replyMessage(event.replyToken, { type: "text", text: "AI 覺得這個話題不安全，拒絕回答喔！" });
-    }
-
-    // 3. 安全取得內容
-    const replyText = json.choices[0].message.content.trim();
-
-    // 4. 寫入 Sheets (確保 sheet 變數存在)
-    if (sheet) {
-      await sheet.addRow({ 
-        userId: userId, 
-        role: "user", 
-        content: prompt, 
-        time: new Date().toLocaleString() 
+          try {
+            const json = JSON.parse(data);
+            if (json.error) throw new Error(json.error.message);
+            const replyText = json.choices[0].message.content.trim();
+            await sheet.addRow({
+              userId: userId,
+              role: "user",
+              content: prompt,
+              time: new Date().toLocaleString()
+            });
+            await sheet.addRow({
+              userId: userId,
+              role: "assistant",
+              content: replyText,
+              time: new Date().toLocaleString()
+            });
+            client.replyMessage(event.replyToken, {
+              type: "text",
+              text: replyText
+            });
+          } catch (err) {
+            console.error("AI Error:", err);
+            client.replyMessage(event.replyToken, { type: "text", text: "教練現在有點忙，請稍後再試。" });
+          }
+          resolve();
+        });
       });
-      await sheet.addRow({ 
-        userId: userId, 
-        role: "assistant", 
-        content: replyText, 
-        time: new Date().toLocaleString() 
-      });
-    }
-
-    client.replyMessage(event.replyToken, { type: "text", text: replyText });
-
-  } catch (err) {
-    console.error("解析失敗，原始資料為:", data); // 在 Render Log 裡看這行
-    client.replyMessage(event.replyToken, { type: "text", text: "解析 AI 回傳時出錯，請看 Log。" });
-  }
-  resolve();
-});
-      });
-
       req.on("error", (err) => { resolve(); });
       req.write(postData);
       req.end();
