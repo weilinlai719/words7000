@@ -291,8 +291,17 @@ async function callAI(event, prompt) {
     await doc.loadInfo();
     const sheet = doc.sheetsByTitle['ai_memory'] ; 
     const rows = await sheet.getRows();
-const userHistory = (rows || []).filter(r => r.get('userId') === userId).slice(-5);
-    
+    const safeRows = Array.isArray(rows) ? rows : [];
+let userHistory = [];
+if (safeRows.length > 0) {
+  userHistory = safeRows.filter(r => {
+    try {
+      return r.get('userId') === userId;
+    } catch (e) {
+      return false;
+    }
+  }).slice(-5);
+}
 let aiMessages = [{ role: "system", content: "你是友善的英語教練。" }];
 
 if (userHistory.length > 0) {
@@ -328,29 +337,49 @@ aiMessages.push({ role: "user", content: prompt });
         let data = "";
         res.on("data", (chunk) => (data += chunk));
         res.on("end", async () => {
-          try {
-            const json = JSON.parse(data);
-            if (json.error) throw new Error(json.error.message);
+  try {
+    const json = JSON.parse(data);
+    
 
-            const replyText = json.choices[0].message.content.trim();
-            await sheet.addRow({ 
-              userId: userId, 
-              role: "user", 
-              content: prompt, 
-              time: new Date().toLocaleString() 
-            });
-            await sheet.addRow({ 
-              userId: userId, 
-              role: "assistant", 
-              content: replyText, 
-              time: new Date().toLocaleString() 
-            });
+    if (json.error) {
+      console.error("Gemini API 返回錯誤:", json.error);
+      return client.replyMessage(event.replyToken, { type: "text", text: `API 錯誤：${json.error.message}` });
+    }
 
-            client.replyMessage(event.replyToken, {
-              type: "text",
-              text: replyText
-            });
+    
+    if (!json.choices || json.choices.length === 0) {
+      console.error("Gemini 返回異常結構（可能被攔截）:", json);
+     
+      return client.replyMessage(event.replyToken, { type: "text", text: "AI 覺得這個話題不安全，拒絕回答喔！" });
+    }
 
+  
+    const replyText = json.choices[0].message.content.trim();
+
+  
+    if (sheet) {
+      await sheet.addRow({ 
+        userId: userId, 
+        role: "user", 
+        content: prompt, 
+        time: new Date().toLocaleString() 
+      });
+      await sheet.addRow({ 
+        userId: userId, 
+        role: "assistant", 
+        content: replyText, 
+        time: new Date().toLocaleString() 
+      });
+    }
+
+    client.replyMessage(event.replyToken, { type: "text", text: replyText });
+
+  } catch (err) {
+    console.error("解析失敗，原始資料為:", data); 
+    client.replyMessage(event.replyToken, { type: "text", text: "解析 AI 回傳時出錯，請看 Log。" });
+  }
+  resolve();
+});
           } catch (err) {
             console.error("AI Error:", err);
             client.replyMessage(event.replyToken, { type: "text", text: "教練現在有點忙，請稍後再試。" });
