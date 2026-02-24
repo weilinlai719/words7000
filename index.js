@@ -38,7 +38,7 @@ const client = new line.Client(config);
 const app = express();
 const words = require('./words.json');
 const words_advance = require('./words-advance.json');
-let echo = { type: 'text', text: '請從選單進行操作 ⬇️' };
+let echo = { type: 'text', text: '請從選單進行操作 ⬇️\n或是輸入/ai問問AI' };
 
 const dirs = ['./user_question', './user_words', './users'];
 dirs.forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); });
