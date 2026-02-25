@@ -278,107 +278,94 @@ function queryWord(event, input) {
 }
 async function callAI(event, prompt) {
   if (!prompt) {
-    return client.replyMessage(event.replyToken, { type: "text", text: "請在 /ai 後面輸入內容" });
+    return client.replyMessage(event.replyToken, {
+      type: "text",
+      text: "請在 /ai 後面輸入內容"
+    });
   }
 
   const userId = event.source.userId;
-  const replyToken = event.replyToken;
 
-  // --- 1. 定義獲取 AI 回覆的 Promise ---
-  const getAiResponse = new Promise((resolve, reject) => {
-    (async () => {
-      try {
-        await doc.loadInfo();
-        const sheet = doc.sheetsByTitle['ai_memory'];
-        if (!sheet) return reject(new Error("找不到 ai_memory 工作表"));
-
-        const rows = await sheet.getRows() || [];
-        const userHistory = rows.filter(r => {
-          try { return r.get('userId') === userId; } catch (e) { return false; }
-        }).slice(-5);
-
-        let aiMessages = [{ role: "system", content: "你是友善的line應用程式英語教練,使用英語與中文回答問題。" }];
-        userHistory.forEach(row => {
-          aiMessages.push({ role: row.get('role'), content: row.get('content') });
-        });
-        aiMessages.push({ role: "user", content: prompt });
-
-        const postData = JSON.stringify({
-          model: "gemini-2.5-flash",
-          messages: aiMessages,
-          // 加入些許隨機性並限制長度，減少 Empty choices 機率
-          temperature: 0.7,
-          max_output_tokens: 1000 
-        });
-
-        const options = {
-          hostname: "generativelanguage.googleapis.com",
-          path: "/v1beta/openai/chat/completions",
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + process.env.GEMINI_API_KEY
-          }
-        };
-
-        const req = https.request(options, (res) => {
-          let data = "";
-          res.on("data", (chunk) => (data += chunk));
-          res.on("end", async () => {
-            try {
-              const json = JSON.parse(data);
-              if (json.error) return reject(new Error(json.error.message));
-              
-              // 檢查是否有內容
-              if (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) {
-                const replyText = json.choices[0].message.content.trim();
-                
-                // 背景儲存到 Sheets (不等待，加快回應)
-                sheet.addRow({
-                  userId: userId, role: "user", content: prompt, time: new Date().toLocaleString()
-                }).catch(e => console.error("Sheet Error:", e));
-                sheet.addRow({
-                  userId: userId, role: "assistant", content: replyText, time: new Date().toLocaleString()
-                }).catch(e => console.error("Sheet Error:", e));
-
-                resolve(replyText);
-              } else {
-                // 如果觸發過濾，json.choices[0].finish_reason 可能會是 'safety'
-                reject(new Error("AI 決定不回答這個問題（Empty choices）"));
-              }
-            } catch (e) { reject(e); }
-          });
-        });
-        req.on("error", (e) => reject(e));
-        req.write(postData);
-        req.end();
-      } catch (err) { reject(err); }
-    })();
-  });
-
-  // --- 2. 定義 4 秒計時器 (留 1 秒緩衝給 LINE) ---
-  const timeout = new Promise((resolve) => setTimeout(() => resolve("TIMEOUT_TRIGGERED"), 4000));
-
-  // --- 3. 執行競賽邏輯 ---
   try {
-    const result = await Promise.race([getAiResponse, timeout]);
-
-    if (result === "TIMEOUT_TRIGGERED") {
-      // 超時：先用 replyToken 說「請稍候」
-      await client.replyMessage(replyToken, { type: "text", text: "這題教練需要想一下，請等我幾秒鐘..." });
-      
-      // 等待真正的結果完成
-      const finalReply = await getAiResponse;
-      // 改用 pushMessage 送回
-      await client.pushMessage(userId, { type: "text", text: finalReply });
-    } else {
-      // 沒超時：直接回覆
-      await client.replyMessage(replyToken, { type: "text", text: result });
+  
+    await doc.loadInfo();
+    const sheet = doc.sheetsByTitle['ai_memory'] ; 
+    const rows = await sheet.getRows();
+    const safeRows = Array.isArray(rows) ? rows : [];
+let userHistory = [];
+if (safeRows.length > 0) {
+  userHistory = safeRows.filter(r => {
+    try {
+      return r.get('userId') === userId;
+    } catch (e) {
+      return false;
     }
+  }).slice(-5);
+}
+let aiMessages = [{ role: "system", content: "你是友善的line應用程式英語教練,使用英語與中文回答問題。" }];
+
+if (userHistory.length > 0) {
+  userHistory.forEach(row => {
+    aiMessages.push({ role: row.get('role'), content: row.get('content') });
+  });
+}
+aiMessages.push({ role: "user", content: prompt });
+
+    const postData = JSON.stringify({
+      model: "gemini-2.5-flash",
+      messages: aiMessages,
+    });
+
+    const options = {
+      hostname: "generativelanguage.googleapis.com",
+      path: "/v1beta/openai/chat/completions",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + process.env.GEMINI_API_KEY 
+      }
+    };
+
+    return new Promise((resolve) => {
+       const req = https.request(options, (res) => {
+        let data = "";
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", async () => {
+          try {
+            const json = JSON.parse(data);
+            if (json.error) throw new Error(json.error.message);
+            const replyText = json.choices[0].message.content.trim();
+            await sheet.addRow({
+              userId: userId,
+              role: "user",
+              content: prompt,
+              time: new Date().toLocaleString()
+            });
+            await sheet.addRow({
+              userId: userId,
+              role: "assistant",
+              content: replyText,
+              time: new Date().toLocaleString()
+            });
+            client.replyMessage(event.replyToken, {
+              type: "text",
+              text: replyText
+            });
+          } catch (err) {
+            console.error("AI Error:", err);
+            client.replyMessage(event.replyToken, { type: "text", text: "教練現在有點忙，請稍後再試。" });
+          }
+          resolve();
+        });
+      });
+      req.on("error", (err) => { resolve(); });
+      req.write(postData);
+      req.end();
+    });
+
   } catch (err) {
-    console.error("AI 處理中斷:", err.message);
-    // 出錯時用 push 通知使用者，避免已讀不回
-    await client.pushMessage(userId, { type: "text", text: "教練剛剛分神了，原因是：" + err.message });
+    console.error('Sheet Memory Error:', err);
+    return client.replyMessage(event.replyToken, { type: "text", text: "記憶讀取失敗" });
   }
 }
 
