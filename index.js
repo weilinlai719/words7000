@@ -302,14 +302,13 @@ async function callAI(event, prompt) {
         } catch (e) {
           return false;
         }
-      }).slice(-5);
+      }).slice(-10);
     }
 
     let aiMessages = [{ role: "system", content: "你是友善的line應用程式英語教練,使用英語與中文回答問題。" }];
 
     if (userHistory.length > 0) {
       userHistory.forEach(row => {
-        // 確保 role 符合 OpenAI 格式 (user/assistant)
         aiMessages.push({ role: row.get('role'), content: row.get('content') });
       });
     }
@@ -340,8 +339,6 @@ async function callAI(event, prompt) {
             if (json.error) throw new Error(json.error.message);
             
             const replyText = json.choices[0].message.content.trim();
-
-            // --- 寫入試算表紀錄 ---
             await sheet.addRow({
               userId: userId,
               role: "user",
@@ -354,9 +351,6 @@ async function callAI(event, prompt) {
               content: replyText,
               time: new Date().toLocaleString()
             });
-
-            // --- 處理 LINE 5,000 字限制與分段發送 ---
-            // 將回覆內容切割成每段最多 4900 字 (保留一點 buffer)
             const MAX_LENGTH = 4900;
             const messages = [];
             
@@ -366,16 +360,13 @@ async function callAI(event, prompt) {
                 text: replyText.substring(i, i + MAX_LENGTH)
               });
             }
-
-            // LINE replyMessage 一次最多可帶 5 個訊息物件
-            // 若 AI 回覆真的長到超過 25,000 字 (5*5000)，這裡取前 5 個
             await client.replyMessage(event.replyToken, messages.slice(0, 5));
             
             resolve();
           } catch (err) {
             console.error("AI Error:", err);
             client.replyMessage(event.replyToken, { type: "text", text: "教練現在有點忙，請稍後再試。" });
-            resolve(); // 避免 Promise 卡死
+            resolve(); 
           }
         });
       });
