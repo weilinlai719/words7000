@@ -277,97 +277,66 @@ function queryWord(event, input) {
   });
 }
 async function callAI(event, prompt) {
-  if (!prompt) {
-    return client.replyMessage(event.replyToken, {
-      type: "text",
-      text: "請在 /ai 後面輸入內容"
-    });
-  }
-
   const userId = event.source.userId;
+  const replyToken = event.replyToken;
+
+  // 定義一個等待 AI 回傳的 Promise
+  const getAiResponse = (async () => {
+    await doc.loadInfo();
+    const sheet = doc.sheetsByTitle['ai_memory'];
+    const rows = await sheet.getRows() || [];
+    const userHistory = rows.filter(r => {
+      try { return r.get('userId') === userId; } catch(e) { return false; }
+    }).slice(-5);
+
+    let aiMessages = [{ role: "system", content: "你是友善的英語教練，用中英回覆。" }];
+    userHistory.forEach(row => {
+      aiMessages.push({ role: row.get('role'), content: row.get('content') });
+    });
+    aiMessages.push({ role: "user", content: prompt });
+
+    // 呼叫 Gemini (假設你已封裝 HTTPS 請求)
+    const replyText = await fetchGemini(aiMessages); 
+
+    // 紀錄到 Sheets
+    if (sheet) {
+      await sheet.addRow({ userId, role: "user", content: prompt, time: new Date().toLocaleString() });
+      await sheet.addRow({ userId, role: "assistant", content: replyText, time: new Date().toLocaleString() });
+    }
+    return replyText;
+  })();
+
+  // 定義一個 4 秒的計時器
+  const timeout = new Promise((resolve) => setTimeout(() => resolve("TIMEOUT_TRIGGERED"), 4000));
 
   try {
-  
-    await doc.loadInfo();
-    const sheet = doc.sheetsByTitle['ai_memory'] ; 
-    const rows = await sheet.getRows();
-    const safeRows = Array.isArray(rows) ? rows : [];
-let userHistory = [];
-if (safeRows.length > 0) {
-  userHistory = safeRows.filter(r => {
-    try {
-      return r.get('userId') === userId;
-    } catch (e) {
-      return false;
+    // 讓 AI 運算與計時器競爭
+    const result = await Promise.race([getAiResponse, timeout]);
+
+    if (result === "TIMEOUT_TRIGGERED") {
+      // 情況 A：超過 4 秒，先用 replyToken 占用連線避免 500 錯誤
+      await client.replyMessage(replyToken, { type: "text", text: "內容較長，教練正在打字中，請稍候..." });
+      
+      // 等待真正的 AI 結果完成
+      const finalReply = await getAiResponse;
+      
+      // 改用 pushMessage 送回
+      await client.pushMessage(userId, { type: "text", text: finalReply });
+    } else {
+      // 情況 B：4 秒內完成，直接 replyMessage (省下 Push 額度)
+      await client.replyMessage(replyToken, { type: "text", text: result });
     }
-  }).slice(-5);
-}
-let aiMessages = [{ role: "system", content: "你是友善的line應用程式英語教練,使用英語與中文回答問題。" }];
-
-if (userHistory.length > 0) {
-  userHistory.forEach(row => {
-    aiMessages.push({ role: row.get('role'), content: row.get('content') });
-  });
-}
-aiMessages.push({ role: "user", content: prompt });
-
-    const postData = JSON.stringify({
-      model: "gemini-2.5-flash",
-      messages: aiMessages,
-    });
-
-    const options = {
-      hostname: "generativelanguage.googleapis.com",
-      path: "/v1beta/openai/chat/completions",
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + process.env.GEMINI_API_KEY 
-      }
-    };
-
-    return new Promise((resolve) => {
-       const req = https.request(options, (res) => {
-        let data = "";
-        res.on("data", (chunk) => (data += chunk));
-        res.on("end", async () => {
-          try {
-            const json = JSON.parse(data);
-            if (json.error) throw new Error(json.error.message);
-            const replyText = json.choices[0].message.content.trim();
-            await sheet.addRow({
-              userId: userId,
-              role: "user",
-              content: prompt,
-              time: new Date().toLocaleString()
-            });
-            await sheet.addRow({
-              userId: userId,
-              role: "assistant",
-              content: replyText,
-              time: new Date().toLocaleString()
-            });
-            client.replyMessage(event.replyToken, {
-              type: "text",
-              text: replyText
-            });
-          } catch (err) {
-            console.error("AI Error:", err);
-            client.replyMessage(event.replyToken, { type: "text", text: "教練現在有點忙，請稍後再試。" });
-          }
-          resolve();
-        });
-      });
-      req.on("error", (err) => { resolve(); });
-      req.write(postData);
-      req.end();
-    });
-
   } catch (err) {
-    console.error('Sheet Memory Error:', err);
-    return client.replyMessage(event.replyToken, { type: "text", text: "記憶讀取失敗" });
+    console.error("AI 處理失敗:", err);
+    // 失敗時的保險機制
+    try {
+      await client.pushMessage(userId, { type: "text", text: "抱歉，教練剛剛分神了，請再試一次。" });
+    } catch (e) {
+      console.error("無法發送錯誤通知:", e);
+    }
   }
 }
+
 function createQuestionType() {
   return {
     "type": "flex", "altText": "考試開始，不要作弊！",
