@@ -302,7 +302,7 @@ if (safeRows.length > 0) {
     }
   }).slice(-5);
 }
-let aiMessages = [{ role: "system", content: "你是友善的英語教練。" }];
+let aiMessages = [{ role: "system", content: "你是友善的line應用程式英語教練,使用英語與中文回答問題。" }];
 
 if (userHistory.length > 0) {
   userHistory.forEach(row => {
