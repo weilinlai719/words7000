@@ -277,29 +277,38 @@ function queryWord(event, input) {
   });
 }
 async function callAI(event, prompt) {
+  if (!prompt) {
+    return client.replyMessage(event.replyToken, { type: "text", text: "請在 /ai 後面輸入內容" });
+  }
+
   const userId = event.source.userId;
   const replyToken = event.replyToken;
 
-  // 定義一個內部函數來處理 Gemini API 請求
+  // --- 1. 定義獲取 AI 回覆的 Promise ---
   const getAiResponse = new Promise((resolve, reject) => {
     (async () => {
       try {
         await doc.loadInfo();
         const sheet = doc.sheetsByTitle['ai_memory'];
+        if (!sheet) return reject(new Error("找不到 ai_memory 工作表"));
+
         const rows = await sheet.getRows() || [];
         const userHistory = rows.filter(r => {
-          try { return r.get('userId') === userId; } catch(e) { return false; }
+          try { return r.get('userId') === userId; } catch (e) { return false; }
         }).slice(-5);
 
-        let aiMessages = [{ role: "system", content: "你是友善的英語教練。" }];
+        let aiMessages = [{ role: "system", content: "你是友善的line應用程式英語教練,使用英語與中文回答問題。" }];
         userHistory.forEach(row => {
           aiMessages.push({ role: row.get('role'), content: row.get('content') });
         });
         aiMessages.push({ role: "user", content: prompt });
 
         const postData = JSON.stringify({
-          model: "gemini-2.0-flash", 
-          messages: aiMessages
+          model: "gemini-2.5-flash",
+          messages: aiMessages,
+          // 加入些許隨機性並限制長度，減少 Empty choices 機率
+          temperature: 0.7,
+          max_output_tokens: 1000 
         });
 
         const options = {
@@ -308,7 +317,7 @@ async function callAI(event, prompt) {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": "Bearer " + process.env.GEMINI_API_KEY 
+            "Authorization": "Bearer " + process.env.GEMINI_API_KEY
           }
         };
 
@@ -319,17 +328,23 @@ async function callAI(event, prompt) {
             try {
               const json = JSON.parse(data);
               if (json.error) return reject(new Error(json.error.message));
-              if (json.choices && json.choices[0]) {
+              
+              // 檢查是否有內容
+              if (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) {
                 const replyText = json.choices[0].message.content.trim();
                 
-                // 異步存入 Sheets，不擋住回傳速度
-                if (sheet) {
-                  sheet.addRow({ userId, role: "user", content: prompt, time: new Date().toLocaleString() });
-                  sheet.addRow({ userId, role: "assistant", content: replyText, time: new Date().toLocaleString() });
-                }
+                // 背景儲存到 Sheets (不等待，加快回應)
+                sheet.addRow({
+                  userId: userId, role: "user", content: prompt, time: new Date().toLocaleString()
+                }).catch(e => console.error("Sheet Error:", e));
+                sheet.addRow({
+                  userId: userId, role: "assistant", content: replyText, time: new Date().toLocaleString()
+                }).catch(e => console.error("Sheet Error:", e));
+
                 resolve(replyText);
               } else {
-                reject(new Error("Empty choices"));
+                // 如果觸發過濾，json.choices[0].finish_reason 可能會是 'safety'
+                reject(new Error("AI 決定不回答這個問題（Empty choices）"));
               }
             } catch (e) { reject(e); }
           });
@@ -341,26 +356,29 @@ async function callAI(event, prompt) {
     })();
   });
 
-  // 計時器：4 秒
+  // --- 2. 定義 4 秒計時器 (留 1 秒緩衝給 LINE) ---
   const timeout = new Promise((resolve) => setTimeout(() => resolve("TIMEOUT_TRIGGERED"), 4000));
 
+  // --- 3. 執行競賽邏輯 ---
   try {
     const result = await Promise.race([getAiResponse, timeout]);
 
     if (result === "TIMEOUT_TRIGGERED") {
-      // 情況 A：超時，先 reply 一次
-      await client.replyMessage(replyToken, { type: "text", text: "這題比較難，教練正在打字中..." });
-      // 等待 AI 結束後 push
+      // 超時：先用 replyToken 說「請稍候」
+      await client.replyMessage(replyToken, { type: "text", text: "這題教練需要想一下，請等我幾秒鐘..." });
+      
+      // 等待真正的結果完成
       const finalReply = await getAiResponse;
+      // 改用 pushMessage 送回
       await client.pushMessage(userId, { type: "text", text: finalReply });
     } else {
-      // 情況 B：4秒內完成，正常 reply
+      // 沒超時：直接回覆
       await client.replyMessage(replyToken, { type: "text", text: result });
     }
   } catch (err) {
-    console.error("AI Error:", err);
-    // 這裡就是你看到的「教練分神」來源，加上 err.message 方便除錯
-    client.pushMessage(userId, { type: "text", text: "教練剛剛分神了: " + err.message });
+    console.error("AI 處理中斷:", err.message);
+    // 出錯時用 push 通知使用者，避免已讀不回
+    await client.pushMessage(userId, { type: "text", text: "教練剛剛分神了，原因是：" + err.message });
   }
 }
 
