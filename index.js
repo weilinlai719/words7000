@@ -276,7 +276,6 @@ function queryWord(event, input) {
     });
   });
 }
-const https = require('https');
 
 async function callAI(event, prompt) {
   if (!prompt) {
