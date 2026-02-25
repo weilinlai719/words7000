@@ -276,6 +276,8 @@ function queryWord(event, input) {
     });
   });
 }
+const https = require('https');
+
 async function callAI(event, prompt) {
   if (!prompt) {
     return client.replyMessage(event.replyToken, {
@@ -287,29 +289,31 @@ async function callAI(event, prompt) {
   const userId = event.source.userId;
 
   try {
-  
     await doc.loadInfo();
-    const sheet = doc.sheetsByTitle['ai_memory'] ; 
+    const sheet = doc.sheetsByTitle['ai_memory'];
     const rows = await sheet.getRows();
     const safeRows = Array.isArray(rows) ? rows : [];
-let userHistory = [];
-if (safeRows.length > 0) {
-  userHistory = safeRows.filter(r => {
-    try {
-      return r.get('userId') === userId;
-    } catch (e) {
-      return false;
-    }
-  }).slice(-5);
-}
-let aiMessages = [{ role: "system", content: "你是友善的line應用程式英語教練,使用英語與中文回答問題。" }];
 
-if (userHistory.length > 0) {
-  userHistory.forEach(row => {
-    aiMessages.push({ role: row.get('role'), content: row.get('content') });
-  });
-}
-aiMessages.push({ role: "user", content: prompt });
+    let userHistory = [];
+    if (safeRows.length > 0) {
+      userHistory = safeRows.filter(r => {
+        try {
+          return r.get('userId') === userId;
+        } catch (e) {
+          return false;
+        }
+      }).slice(-5);
+    }
+
+    let aiMessages = [{ role: "system", content: "你是友善的line應用程式英語教練,使用英語與中文回答問題。" }];
+
+    if (userHistory.length > 0) {
+      userHistory.forEach(row => {
+        // 確保 role 符合 OpenAI 格式 (user/assistant)
+        aiMessages.push({ role: row.get('role'), content: row.get('content') });
+      });
+    }
+    aiMessages.push({ role: "user", content: prompt });
 
     const postData = JSON.stringify({
       model: "gemini-2.5-flash",
@@ -322,19 +326,22 @@ aiMessages.push({ role: "user", content: prompt });
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": "Bearer " + process.env.GEMINI_API_KEY 
+        "Authorization": "Bearer " + process.env.GEMINI_API_KEY
       }
     };
 
-    return new Promise((resolve) => {
-       const req = https.request(options, (res) => {
+    return new Promise((resolve, reject) => {
+      const req = https.request(options, (res) => {
         let data = "";
         res.on("data", (chunk) => (data += chunk));
         res.on("end", async () => {
           try {
             const json = JSON.parse(data);
             if (json.error) throw new Error(json.error.message);
+            
             const replyText = json.choices[0].message.content.trim();
+
+            // --- 寫入試算表紀錄 ---
             await sheet.addRow({
               userId: userId,
               role: "user",
@@ -347,18 +354,36 @@ aiMessages.push({ role: "user", content: prompt });
               content: replyText,
               time: new Date().toLocaleString()
             });
-            client.replyMessage(event.replyToken, {
-              type: "text",
-              text: replyText
-            });
+
+            // --- 處理 LINE 5,000 字限制與分段發送 ---
+            // 將回覆內容切割成每段最多 4900 字 (保留一點 buffer)
+            const MAX_LENGTH = 4900;
+            const messages = [];
+            
+            for (let i = 0; i < replyText.length; i += MAX_LENGTH) {
+              messages.push({
+                type: "text",
+                text: replyText.substring(i, i + MAX_LENGTH)
+              });
+            }
+
+            // LINE replyMessage 一次最多可帶 5 個訊息物件
+            // 若 AI 回覆真的長到超過 25,000 字 (5*5000)，這裡取前 5 個
+            await client.replyMessage(event.replyToken, messages.slice(0, 5));
+            
+            resolve();
           } catch (err) {
             console.error("AI Error:", err);
             client.replyMessage(event.replyToken, { type: "text", text: "教練現在有點忙，請稍後再試。" });
+            resolve(); // 避免 Promise 卡死
           }
-          resolve();
         });
       });
-      req.on("error", (err) => { resolve(); });
+
+      req.on("error", (err) => { 
+        console.error("Request Error:", err);
+        resolve(); 
+      });
       req.write(postData);
       req.end();
     });
@@ -368,6 +393,7 @@ aiMessages.push({ role: "user", content: prompt });
     return client.replyMessage(event.replyToken, { type: "text", text: "記憶讀取失敗" });
   }
 }
+
 
 function createQuestionType() {
   return {
