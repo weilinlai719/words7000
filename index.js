@@ -203,50 +203,55 @@ async function updateUserWrongAnswer(event) {
  APP FUNCTIONS 
 ====================================*/
 const axios = require('axios');
+const { translate } = require('google-translate-api-x');
 
 async function queryWord(event, input) {
-
   const word = input.trim().toLowerCase();
-  const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`;
+  const dictUrl = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`;
 
   try {
-    const response = await axios.get(url);
-    const data = response.data[0]; 
+    // 1. 同步獲取單字資料
+    const response = await axios.get(dictUrl);
+    const data = response.data[0];
 
-    const phonetic = data.phonetic || data.phonetics?.find(p => p.text)?.text || "無音標資訊";
+    // 2. 提取基本資訊
+    const phonetic = data.phonetic || data.phonetics?.find(p => p.text)?.text || "";
+    const meaning = data.meanings[0];
+    const partOfSpeech = meaning.partOfSpeech;
+    const enDef = meaning.definitions[0].definition;
+    const example = meaning.definitions[0].example || "";
 
-  
-    const firstMeaning = data.meanings[0];
-    const partOfSpeech = firstMeaning.partOfSpeech; 
-    const definition = firstMeaning.definitions[0].definition;
-    const example = firstMeaning.definitions[0].example ? `\n例句: ${firstMeaning.definitions[0].example}` : "";
+    // 3. 翻譯定義與例句 (翻成繁體中文)
+    // 我們把定義和例句湊在一起翻譯，節省請求次數
+    const textToTranslate = `Definition: ${enDef}${example ? ' | Example: ' + example : ''}`;
+    const resTranslation = await translate(textToTranslate, { to: 'zh-TW' });
+    const translatedText = resTranslation.text;
 
-    const displayInfo = `[${partOfSpeech}] ${definition}${example}`;
+    // 4. 格式化顯示文字
+    const body_contents = [
+      {
+        type: "text",
+        text: phonetic,
+        color: "#999999",
+        size: "sm"
+      },
+      { type: "separator", margin: "md" },
+      {
+        type: "text",
+        text: `【${partOfSpeech}】`,
+        weight: "bold",
+        color: "#111111",
+        margin: "md"
+      },
+      {
+        type: "text",
+        text: translatedText.replace(' | ', '\n'), // 將翻譯後的結果分行顯示
+        wrap: true,
+        size: "md"
+      }
+    ];
 
-
-    let body_contents = [];
-    
-
-    body_contents.push({
-      type: "text",
-      text: phonetic,
-      color: "#999999",
-      size: "sm",
-      wrap: true
-    });
-    
-    body_contents.push({ type: "separator", margin: "md" });
-
-
-    body_contents.push({
-      type: "text",
-      text: displayInfo,
-      wrap: true,
-      size: "md",
-      margin: "md"
-    });
-
- 
+    // 5. 發送 Flex Message
     await client.replyMessage(event.replyToken, [{
       type: "flex",
       altText: `單字查詢: ${word}`,
@@ -257,27 +262,27 @@ async function queryWord(event, input) {
           layout: "vertical",
           contents: [{
             type: "text",
-            text: word.toUpperCase(),
+            text: word,
             weight: "bold",
             size: "xl",
-            color: "#1DB446"
+            color: "#4682B4"
           }]
         },
         body: {
           type: "box",
           layout: "vertical",
+          spacing: "sm",
           contents: body_contents
         }
       }
     }]);
 
   } catch (error) {
-    // 6. 錯誤處理：通常是 404 代表查無此字
-    console.error("Query Error:", error.message);
-    
+    console.error("Error:", error);
+    // 處理查不到的情況
     client.replyMessage(event.replyToken, [{
       type: "text",
-      text: `抱歉，找不到「${word}」的資料，請檢查拼字。`
+      text: `字典查無「${word}」，或翻譯服務暫時忙碌中。`
     }]);
   }
 }
