@@ -213,40 +213,53 @@ async function queryWord(event, input) {
     const data = response.data[0];
     const phonetic = data.phonetic || data.phonetics?.find(p => p.text)?.text || "";
 
-    // 建立一個陣列來收集所有要顯示的文字行
-    let displayList = [];
-    displayList.push(`📖 單字查詢：${word.toUpperCase()}`);
-    if (phonetic) displayList.push(`音標：${phonetic}`);
-    displayList.push(`----------------------`);
+    let rawEnglishList = []; // 用來放純英文，準備一次翻譯
+    let structure = []; // 用來紀錄結構
 
-    // 遍歷詞性與定義 (中英對照)
-    for (const m of data.meanings) {
-      displayList.push(`\n【${m.partOfSpeech.toUpperCase()}】`);
-
-      for (let i = 0; i < m.definitions.length; i++) {
-        const d = m.definitions[i];
+    // 1. 先整理所有英文定義與例句
+    data.meanings.forEach((m) => {
+      structure.push({ type: 'partOfSpeech', text: `\n【${m.partOfSpeech.toUpperCase()}】` });
+      m.definitions.forEach((d, i) => {
+        structure.push({ type: 'definition', en: `${i + 1}. ${d.definition}` });
+        rawEnglishList.push(d.definition); // 放入批次翻譯清單
         
-        // 翻譯定義
-        const transDef = await translate(d.definition, { to: 'zh-TW' });
-        displayList.push(`${i + 1}. ${d.definition}`);
-        displayList.push(`   釋義：${transDef.text}`);
-
-        // 翻譯例句
         if (d.example) {
-          const transEx = await translate(d.example, { to: 'zh-TW' });
-          displayList.push(`   Ex: ${d.example}`);
-          displayList.push(`   例：${transEx.text}`);
+          structure.push({ type: 'example', en: `   Ex: ${d.example}` });
+          rawEnglishList.push(d.example); // 放入批次翻譯清單
         }
+      });
+    });
+
+    // 2. 執行「批次翻譯」 (用特殊符號隔開，避免 Google 把句子合在一起)
+    const bigEnString = rawEnglishList.join(' \n### ');
+    const resTranslation = await translate(bigEnString, { to: 'zh-TW' });
+    const translatedList = resTranslation.text.split('###').map(s => s.trim());
+
+    // 3. 把翻譯好的中文塞回結構中
+    let transIndex = 0;
+    let finalLines = [
+      `📖 單字查詢：${word.toUpperCase()}`,
+      `音標：${phonetic}`,
+      `----------------------`
+    ];
+
+    structure.forEach(item => {
+      if (item.type === 'partOfSpeech') {
+        finalLines.push(item.text);
+      } else if (item.type === 'definition') {
+        finalLines.push(item.en);
+        finalLines.push(`   釋義：${translatedList[transIndex++] || ""}`);
+      } else if (item.type === 'example') {
+        finalLines.push(item.en);
+        finalLines.push(`   例：${translatedList[transIndex++] || ""}`);
       }
-    }
+    });
 
-    // 將所有行組合成一個超大字串
-    const replyText = displayList.join('\n');
+    const replyText = finalLines.join('\n');
 
-    // --- 你要求的自動分段邏輯 ---
-    const MAX_LENGTH = 4900; // 留一點緩衝給 LINE (上限 5000)
+    // 4. 你原本的分段邏輯
+    const MAX_LENGTH = 4900;
     const messages = [];
-    
     for (let i = 0; i < replyText.length; i += MAX_LENGTH) {
       messages.push({
         type: "text",
@@ -254,15 +267,11 @@ async function queryWord(event, input) {
       });
     }
 
-    // LINE 一次回覆最多只能 5 則訊息
     await client.replyMessage(event.replyToken, messages.slice(0, 5));
 
   } catch (error) {
     console.error("Query Error:", error);
-    client.replyMessage(event.replyToken, [{
-      type: "text",
-      text: `找不到「${word}」或服務忙碌中，請稍後再試。`
-    }]);
+    client.replyMessage(event.replyToken, { type: "text", text: `找不到「${word}」或服務忙碌。` });
   }
 }
 async function callAI(event, prompt) {
