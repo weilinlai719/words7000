@@ -213,13 +213,16 @@ async function queryWord(event, input) {
     const data = response.data[0];
     const phonetic = data.phonetic || data.phonetics?.find(p => p.text)?.text || "";
 
+    // 建立一個陣列來收集所有要顯示的文字行
     let displayList = [];
+    displayList.push(`📖 單字查詢：${word.toUpperCase()}`);
+    if (phonetic) displayList.push(`音標：${phonetic}`);
+    displayList.push(`----------------------`);
 
-    // 遍歷所有詞性
+    // 遍歷詞性與定義 (中英對照)
     for (const m of data.meanings) {
       displayList.push(`\n【${m.partOfSpeech.toUpperCase()}】`);
 
-      // 遍歷該詞性下的所有定義
       for (let i = 0; i < m.definitions.length; i++) {
         const d = m.definitions[i];
         
@@ -228,58 +231,37 @@ async function queryWord(event, input) {
         displayList.push(`${i + 1}. ${d.definition}`);
         displayList.push(`   釋義：${transDef.text}`);
 
-        // 如果有例句，也翻譯例句
+        // 翻譯例句
         if (d.example) {
           const transEx = await translate(d.example, { to: 'zh-TW' });
           displayList.push(`   Ex: ${d.example}`);
           displayList.push(`   例：${transEx.text}`);
         }
-        displayList.push(""); // 每個定義間留個空行
       }
     }
 
-    const finalString = displayList.join('\n');
+    // 將所有行組合成一個超大字串
+    const replyText = displayList.join('\n');
 
-    await client.replyMessage(event.replyToken, [{
-      type: "flex",
-      altText: `單字詳解: ${word}`,
-      contents: {
-        type: "bubble",
-        header: {
-          type: "box",
-          layout: "vertical",
-          contents: [{
-            type: "text",
-            text: word.toUpperCase(),
-            weight: "bold",
-            size: "xl",
-            color: "#1E90FF"
-          }]
-        },
-        body: {
-          type: "box",
-          layout: "vertical",
-          contents: [
-            { type: "text", text: phonetic, color: "#888888", size: "sm" },
-            { type: "separator", margin: "md" },
-            {
-              type: "text",
-              text: finalString.substring(0, 2000), // 避免超過 LINE 限制
-              wrap: true,
-              size: "sm",
-              margin: "md",
-              whiteSpace: "pre"
-            }
-          ]
-        }
-      }
-    }]);
+    // --- 你要求的自動分段邏輯 ---
+    const MAX_LENGTH = 4900; // 留一點緩衝給 LINE (上限 5000)
+    const messages = [];
+    
+    for (let i = 0; i < replyText.length; i += MAX_LENGTH) {
+      messages.push({
+        type: "text",
+        text: replyText.substring(i, i + MAX_LENGTH)
+      });
+    }
+
+    // LINE 一次回覆最多只能 5 則訊息
+    await client.replyMessage(event.replyToken, messages.slice(0, 5));
 
   } catch (error) {
     console.error("Query Error:", error);
     client.replyMessage(event.replyToken, [{
       type: "text",
-      text: `找不到「${word}」或翻譯請求過於頻繁，請稍後再試。`
+      text: `找不到「${word}」或服務忙碌中，請稍後再試。`
     }]);
   }
 }
