@@ -202,81 +202,85 @@ async function updateUserWrongAnswer(event) {
 /*==================================
  APP FUNCTIONS 
 ====================================*/
-function queryWord(event, input) {
-  let word = input
-    .trim()
-    .replace(/[-.]/g, "")
-    .replace(/é/g, "e");
+const axios = require('axios');
 
-  let url = "https://cdict.info/query/" + encodeURIComponent(word);
+async function queryWord(event, input) {
 
-  https.get(url, (res) => {
-    let data = '';
-    res.on('data', chunk => data += chunk);
+  const word = input.trim().toLowerCase();
+  const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`;
 
-    res.on('end', () => {
-      let root = HTMLParser.parse(data);
+  try {
+    const response = await axios.get(url);
+    const data = response.data[0]; 
 
-      let word_pa =
-        root.querySelector('.resultbox .dictt')
-          ?.innerText
-          .replace(/(國際音標)/g, "\n國際音標") || "";
+    const phonetic = data.phonetic || data.phonetics?.find(p => p.text)?.text || "無音標資訊";
 
-      let word_info =
-        root.querySelector('.resultbox')
-          ?.toString()
-          .replace(/<br\s*[\/]?>/g, "\n")
-          .replace(/<[^>]+>/g, "") || "查無資料";
+  
+    const firstMeaning = data.meanings[0];
+    const partOfSpeech = firstMeaning.partOfSpeech; 
+    const definition = firstMeaning.definitions[0].definition;
+    const example = firstMeaning.definitions[0].example ? `\n例句: ${firstMeaning.definitions[0].example}` : "";
 
-      if (word_info.includes("找不到相關")) {
-        word_info = "字典查無資料，請確認拼字";
-      }
+    const displayInfo = `[${partOfSpeech}] ${definition}${example}`;
 
-      let body_contents = [];
 
-      if (word_pa) {
-        body_contents.push({
-          type: "text",
-          color: "#999999",
-          size: "xs",
-          wrap: true,
-          text: word_pa
-        });
-        body_contents.push({ type: "separator" });
-      }
+    let body_contents = [];
+    
 
-      body_contents.push({
-        type: "text",
-        wrap: true,
-        text: word_info
-      });
-
-      client.replyMessage(event.replyToken, [{
-        type: "flex",
-        altText: "單字查詢",
-        contents: {
-          type: "bubble",
-          header: {
-            type: "box",
-            layout: "vertical",
-            contents: [{
-              type: "text",
-              size: "xl",
-              text: word
-            }]
-          },
-          body: {
-            type: "box",
-            layout: "vertical",
-            spacing: "md",
-            contents: body_contents
-          }
-        }
-      }]);
+    body_contents.push({
+      type: "text",
+      text: phonetic,
+      color: "#999999",
+      size: "sm",
+      wrap: true
     });
-  });
-}
+    
+    body_contents.push({ type: "separator", margin: "md" });
 
+
+    body_contents.push({
+      type: "text",
+      text: displayInfo,
+      wrap: true,
+      size: "md",
+      margin: "md"
+    });
+
+ 
+    await client.replyMessage(event.replyToken, [{
+      type: "flex",
+      altText: `單字查詢: ${word}`,
+      contents: {
+        type: "bubble",
+        header: {
+          type: "box",
+          layout: "vertical",
+          contents: [{
+            type: "text",
+            text: word.toUpperCase(),
+            weight: "bold",
+            size: "xl",
+            color: "#1DB446"
+          }]
+        },
+        body: {
+          type: "box",
+          layout: "vertical",
+          contents: body_contents
+        }
+      }
+    }]);
+
+  } catch (error) {
+    // 6. 錯誤處理：通常是 404 代表查無此字
+    console.error("Query Error:", error.message);
+    
+    client.replyMessage(event.replyToken, [{
+      type: "text",
+      text: `抱歉，找不到「${word}」的資料，請檢查拼字。`
+    }]);
+  }
+}
 async function callAI(event, prompt) {
   if (!prompt) {
     return client.replyMessage(event.replyToken, {
