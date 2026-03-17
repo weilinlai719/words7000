@@ -245,7 +245,7 @@ async function queryWord(event, input) {
       },
       {
         type: "text",
-        text: translatedText.replace(' | ', '\n'), // 將翻譯後的結果分行顯示
+        text: translatedText.replace(' | ', '\n')+enDef+example, // 將翻譯後的結果分行顯示
         wrap: true,
         size: "md"
       }
