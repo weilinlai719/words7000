@@ -204,57 +204,45 @@ async function updateUserWrongAnswer(event) {
 ====================================*/
 const axios = require('axios');
 const { translate } = require('google-translate-api-x');
-
 async function queryWord(event, input) {
   const word = input.trim().toLowerCase();
   const dictUrl = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`;
 
   try {
-    // 1. 同步獲取單字資料
     const response = await axios.get(dictUrl);
     const data = response.data[0];
-
-    // 2. 提取基本資訊
     const phonetic = data.phonetic || data.phonetics?.find(p => p.text)?.text || "";
-    const meaning = data.meanings[0];
-    const partOfSpeech = meaning.partOfSpeech;
-    const enDef = meaning.definitions[0].definition;
-    const example = meaning.definitions[0].example || "";
 
-    // 3. 翻譯定義與例句 (翻成繁體中文)
-    // 我們把定義和例句湊在一起翻譯，節省請求次數
-    const textToTranslate = `Definition: ${enDef}${example ? ' | Example: ' + example : ''}`;
-    const resTranslation = await translate(textToTranslate, { to: 'zh-TW' });
-    const translatedText = resTranslation.text;
+    let displayList = [];
 
-    // 4. 格式化顯示文字
-    const body_contents = [
-      {
-        type: "text",
-        text: phonetic,
-        color: "#999999",
-        size: "sm"
-      },
-      { type: "separator", margin: "md" },
-      {
-        type: "text",
-        text: `【${partOfSpeech}】`,
-        weight: "bold",
-        color: "#111111",
-        margin: "md"
-      },
-      {
-        type: "text",
-        text: translatedText.replace(' | ', '\n')+enDef+example, // 將翻譯後的結果分行顯示
-        wrap: true,
-        size: "md"
+    // 遍歷所有詞性
+    for (const m of data.meanings) {
+      displayList.push(`\n【${m.partOfSpeech.toUpperCase()}】`);
+
+      // 遍歷該詞性下的所有定義
+      for (let i = 0; i < m.definitions.length; i++) {
+        const d = m.definitions[i];
+        
+        // 翻譯定義
+        const transDef = await translate(d.definition, { to: 'zh-TW' });
+        displayList.push(`${i + 1}. ${d.definition}`);
+        displayList.push(`   釋義：${transDef.text}`);
+
+        // 如果有例句，也翻譯例句
+        if (d.example) {
+          const transEx = await translate(d.example, { to: 'zh-TW' });
+          displayList.push(`   Ex: ${d.example}`);
+          displayList.push(`   例：${transEx.text}`);
+        }
+        displayList.push(""); // 每個定義間留個空行
       }
-    ];
+    }
 
-    // 5. 發送 Flex Message
+    const finalString = displayList.join('\n');
+
     await client.replyMessage(event.replyToken, [{
       type: "flex",
-      altText: `單字查詢: ${word}`,
+      altText: `單字詳解: ${word}`,
       contents: {
         type: "bubble",
         header: {
@@ -262,27 +250,36 @@ async function queryWord(event, input) {
           layout: "vertical",
           contents: [{
             type: "text",
-            text: word,
+            text: word.toUpperCase(),
             weight: "bold",
             size: "xl",
-            color: "#4682B4"
+            color: "#1E90FF"
           }]
         },
         body: {
           type: "box",
           layout: "vertical",
-          spacing: "sm",
-          contents: body_contents
+          contents: [
+            { type: "text", text: phonetic, color: "#888888", size: "sm" },
+            { type: "separator", margin: "md" },
+            {
+              type: "text",
+              text: finalString.substring(0, 2000), // 避免超過 LINE 限制
+              wrap: true,
+              size: "sm",
+              margin: "md",
+              whiteSpace: "pre"
+            }
+          ]
         }
       }
     }]);
 
   } catch (error) {
-    console.error("Error:", error);
-    // 處理查不到的情況
+    console.error("Query Error:", error);
     client.replyMessage(event.replyToken, [{
       type: "text",
-      text: `字典查無「${word}」，或翻譯服務暫時忙碌中。`
+      text: `找不到「${word}」或翻譯請求過於頻繁，請稍後再試。`
     }]);
   }
 }
